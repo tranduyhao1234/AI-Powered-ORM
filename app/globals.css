@@ -2,12 +2,86 @@
 
 :root {
   color-scheme: light;
+  --bg-ink: #10212b;
+  --bg-paper: #f5f8f7;
+  --card-bg: rgba(255, 255, 255, 0.86);
+  --card-border: rgba(31, 58, 72, 0.14);
+  --brand: #136f63;
+  --brand-alt: #ef8354;
+  --text-main: #10212b;
+  --text-soft: #5c6d75;
+  --font-display: "Trebuchet MS", "Gill Sans", "Avenir Next", "Segoe UI", sans-serif;
+  --font-body: "Source Sans Pro", "Lucida Sans", "Trebuchet MS", sans-serif;
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  background: #f8fafc;
-  color: #0f172a;
-  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(99, 164, 140, 0.26), transparent 38%),
+    radial-gradient(circle at 88% 8%, rgba(246, 176, 80, 0.22), transparent 34%),
+    linear-gradient(180deg, #f7fbfa 0%, #eef3f6 52%, #edf2f1 100%);
+  color: var(--text-main);
+  font-family: var(--font-body);
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+}
+
+.dashboard-shell {
+  animation: page-enter 480ms ease-out;
+}
+
+.glass-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  backdrop-filter: blur(8px);
+  box-shadow:
+    0 1px 2px rgba(16, 33, 43, 0.05),
+    0 12px 30px rgba(16, 33, 43, 0.06);
+}
+
+.rise-in {
+  animation: rise-in 520ms ease-out;
+}
+
+.ui-input {
+  border: 1px solid rgba(16, 33, 43, 0.16);
+  background: rgba(255, 255, 255, 0.92);
+  transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+}
+
+.ui-input:focus {
+  border-color: rgba(19, 111, 99, 0.7);
+  box-shadow: 0 0 0 4px rgba(19, 111, 99, 0.16);
+  transform: translateY(-1px);
+}
+
+.soft-scroll {
+  scrollbar-width: thin;
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
