@@ -9,7 +9,7 @@ AI-Powered ORM is a web dashboard to:
 - Day 1: Next.js + Tailwind + Supabase setup
 - Day 2: Fetch and persist latest 5 reviews from Google Places
 - Day 3: Single-screen dashboard with `pending/resolved` status
-- Day 4: AI suggestion generation (3 options) via Gemini Flash 2
+- Day 4: AI suggestion generation (3 options) via LongCat Flash
 - Day 5: Approve flow (`pending -> resolved`)
 - Day 6: Validation, timeout/retry, error hardening, QA checklist
 - Day 7: Deploy and demo handoff docs
@@ -20,7 +20,7 @@ AI-Powered ORM is a web dashboard to:
 - Tailwind CSS
 - Supabase (Postgres)
 - Google Places API
-- Gemini API (`gemini-2.0-flash-lite` by default)
+- LongCat API (`LongCat-Flash-Chat`)
 
 ## Quick Start (Local)
 1. Install dependencies:
@@ -36,8 +36,17 @@ Then fill:
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 - `GOOGLE_PLACES_API_KEY`
-- `GEMINI_API_KEY`
-- optional: `GEMINI_MODEL` (default `gemini-2.0-flash-lite`)
+- `LONGCAT_API_KEY`
+- optional: `LONGCAT_MODEL` (default `LongCat-Flash-Chat`)
+- optional: `LONGCAT_BASE_URL` (default `https://api.longcat.chat/openai/v1`)
+- optional: `ENABLE_LONGCAT_REVIEW_FALLBACK` (default `true`)
+- optional: `REVIEW_SOURCE` (`google` | `longcat` | `sample`, default `google`)
+- optional: `API_FAST_MODE` (default `true`, prioritizes low latency)
+- optional: `GOOGLE_API_TIMEOUT_MS`, `AI_API_TIMEOUT_MS`
+- optional: `EXTERNAL_API_RETRIES`, `EXTERNAL_API_RETRY_DELAY_MS`
+- optional: `ALLOW_AI_FALLBACK` (default `true`, returns instant local suggestions when LongCat is slow/unavailable)
+- optional: `AI_RESPONSE_DEADLINE_MS` (default `5000`, UI fallback deadline before waiting for LongCat)
+- optional: `AI_INSTANT_MODE` (default `false`; `true` = always return local suggestions immediately, fastest possible)
 
 3. Apply database schema in Supabase SQL Editor:
 - Run: `supabase/schema.sql`
@@ -51,7 +60,7 @@ Open `http://localhost:3000`.
 ## Core Routes
 - `POST /api/reviews/fetch`
   - input: `{ "placeId": "..." }`
-  - effect: fetch latest reviews from Google Places and upsert to `reviews`
+  - effect: fetch latest reviews from Google Places; if unavailable, fallback to LongCat-generated reviews, then upsert to `reviews`
 
 - `POST /api/reviews/generate`
   - input: `{ "reviewId": "uuid" }`

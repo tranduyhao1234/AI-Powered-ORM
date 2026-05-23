@@ -1,15 +1,17 @@
-﻿"use client";
+"use client";
 
 import { FormEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type ReviewItem = {
   id: string;
+  place_id: string;
   reviewer_name: string | null;
   rating: number | null;
   review_text: string;
   review_time: string | null;
   status: "pending" | "resolved";
+  suggestions?: unknown[];
 };
 
 type FetchResult = {
@@ -19,6 +21,14 @@ type FetchResult = {
   message?: string;
   error?: string;
 };
+
+function formatRatingStars(rating: number | null) {
+  if (typeof rating !== "number" || !Number.isFinite(rating)) {
+    return "No rating";
+  }
+  const safeRating = Math.max(1, Math.min(5, Math.round(rating)));
+  return `${"\u2605".repeat(safeRating)}${"\u2606".repeat(5 - safeRating)}`;
+}
 
 export function PlaceReviewFetcher() {
   const router = useRouter();
@@ -49,7 +59,10 @@ export function PlaceReviewFetcher() {
       }
 
       setResult(payload);
+      window.dispatchEvent(new CustomEvent("reviews:fetched", { detail: payload }));
       router.refresh();
+      window.setTimeout(() => router.refresh(), 2500);
+      window.setTimeout(() => router.refresh(), 6000);
     } catch (err) {
       setResult(null);
       setError(err instanceof Error ? err.message : "Unexpected error");
@@ -59,11 +72,17 @@ export function PlaceReviewFetcher() {
   }
 
   return (
-    <section className="glass-card space-y-5 rounded-2xl p-6 sm:p-7">
-      <div className="space-y-1">
-        <h2 className="text-xl font-semibold text-slate-900">Review Data Pipeline</h2>
-        <p className="text-sm text-slate-600">
-          Paste a Google Place ID and pull the latest reviews into your dashboard data store.
+    <section className="glass-card space-y-4 rounded-3xl p-4 sm:p-5">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+        <div className="space-y-1">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Data Pipeline</p>
+          <h2 className="text-xl font-semibold text-slate-900">Fetch or Generate Feedback</h2>
+          <p className="max-w-2xl text-sm text-slate-600">
+            Enter a Place ID. Google reviews are used when available; LongCat creates AI demo feedback for free mode.
+          </p>
+        </div>
+        <p className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+          Latest 5 saved to database
         </p>
       </div>
 
@@ -88,36 +107,34 @@ export function PlaceReviewFetcher() {
         </button>
       </form>
 
-      <p className="text-xs text-slate-500">
-        Tip: Free mode supports sample data when Google billing is not enabled.
-      </p>
-
       {error ? (
         <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700">{error}</p>
       ) : null}
 
       {result ? (
         <div className="space-y-3">
-          <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
-            Saved <strong>{result.count}</strong> latest reviews for <strong>{result.placeId}</strong>.
-          </p>
-          {result.message ? (
-            <p className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">{result.message}</p>
-          ) : null}
+          <div className="grid gap-2 md:grid-cols-[1fr_1fr]">
+            <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+              Saved <strong>{result.count}</strong> latest reviews for <strong>{result.placeId}</strong>.
+            </p>
+            {result.message ? (
+              <p className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">{result.message}</p>
+            ) : null}
+          </div>
 
-          <ul className="soft-scroll max-h-72 space-y-2 overflow-auto pr-1">
+          <ul className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
             {result.reviews.map((review) => (
               <li key={review.id} className="rounded-xl border border-slate-200/80 bg-white/90 p-3 shadow-sm">
                 <div className="mb-1 flex flex-wrap items-center gap-2 text-sm">
                   <span className="font-semibold text-slate-900">{review.reviewer_name ?? "Anonymous"}</span>
                   <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                    {review.rating ? `Rating ${review.rating}` : "No rating"}
+                    {formatRatingStars(review.rating)}
                   </span>
                   <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs uppercase tracking-wide text-slate-600">
                     {review.status}
                   </span>
                 </div>
-                <p className="text-sm text-slate-700">{review.review_text}</p>
+                <p className="line-clamp-2 text-sm leading-relaxed text-slate-700">{review.review_text}</p>
                 {review.review_time ? (
                   <p className="mt-1 text-xs text-slate-500">
                     {new Date(review.review_time).toLocaleString()}

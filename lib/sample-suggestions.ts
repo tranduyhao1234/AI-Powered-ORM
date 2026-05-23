@@ -24,15 +24,14 @@ export function buildFallbackSuggestions(reviewText: string): Suggestion[] {
     {
       tone: "friendly",
       content:
-        `Cảm ơn bạn rất nhiều vì đã ghé quán và góp ý. Về phản hồi "${preview}", ` +
+        `Cảm ơn bạn đã ghé quán và đóng góp ý kiến. Về phản hồi "${preview}", ` +
         "tụi mình sẽ trao đổi với đội ngũ để phục vụ nhanh và tốt hơn ở lần tới.",
     },
     {
       tone: "problem-solving",
       content:
         `Xin lỗi vì trải nghiệm chưa trọn vẹn liên quan đến "${preview}". ` +
-        "Chúng tôi đã tạo action nội bộ để xử lý ngay và sẽ theo dõi chất lượng theo ca để tránh lặp lại.",
+        "Chúng tôi đã tạo hành động nội bộ để xử lý ngay và theo dõi chất lượng để tránh lặp lại.",
     },
   ];
 }
-

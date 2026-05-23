@@ -29,7 +29,12 @@ create table if not exists public.ai_suggestions (
 
 create index if not exists idx_reviews_place_id on public.reviews(place_id);
 create index if not exists idx_reviews_status on public.reviews(status);
+create index if not exists idx_reviews_review_time_created_at on public.reviews(review_time desc, created_at desc);
+create index if not exists idx_reviews_place_id_review_time_created_at
+  on public.reviews(place_id, review_time desc, created_at desc);
 create index if not exists idx_ai_suggestions_review_id on public.ai_suggestions(review_id);
+create index if not exists idx_ai_suggestions_review_id_created_at
+  on public.ai_suggestions(review_id, created_at desc);
 
 create or replace function public.set_updated_at()
 returns trigger as $$

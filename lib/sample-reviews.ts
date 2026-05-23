@@ -7,7 +7,7 @@ export function buildSampleReviews(placeId: string): GooglePlaceReview[] {
     {
       author_name: "Anh Minh",
       rating: 5,
-      text: `Đồ ăn ngon, phục vụ nhanh. Sẽ quay lại (sample for ${placeId}).`,
+      text: `Đồ ăn ngon, phục vụ nhanh. Sẽ quay lại .`,
       time: now - 60 * 30,
     },
     {

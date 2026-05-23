@@ -1,5 +1,5 @@
 import { AppError } from "@/lib/app-error";
-import { fetchWithRetry } from "@/lib/http";
+import { fetchWithRetry, getExternalRetryOptions } from "@/lib/http";
 import { normalizePlaceId } from "@/lib/validation";
 
 export type GooglePlaceReview = {
@@ -44,7 +44,7 @@ export async function fetchGooglePlaceReviews(placeId: string): Promise<GooglePl
       method: "GET",
       cache: "no-store",
     },
-    { timeoutMs: 9000, retries: 1, retryDelayMs: 350 },
+    getExternalRetryOptions("google"),
   );
 
   if (!response.ok) {

@@ -14,6 +14,22 @@ type SuggestionRow = {
   created_at: string;
 };
 
+type AiResult =
+  | { source: "longcat"; suggestions: Awaited<ReturnType<typeof generateReplySuggestions>> }
+  | { source: "error"; error: unknown };
+
+function parsePositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as { reviewId?: string };
@@ -26,7 +42,7 @@ export async function POST(request: Request) {
     const supabase = await createClient();
     const { data: review, error: reviewError } = await supabase
       .from("reviews")
-      .select("id, review_text")
+      .select("id, review_text, rating")
       .eq("id", reviewId)
       .single();
 
@@ -36,19 +52,46 @@ export async function POST(request: Request) {
 
     let suggestions;
     let message: string | undefined;
-    try {
-      suggestions = await generateReplySuggestions(review.review_text);
-    } catch (error) {
-      const allowFallback = (process.env.ALLOW_AI_FALLBACK || "true").toLowerCase() === "true";
-      if (
-        allowFallback &&
-        isAppError(error) &&
-        (error.code === "GEMINI_RATE_LIMIT" || error.code === "MISSING_GEMINI_KEY")
-      ) {
-        suggestions = buildFallbackSuggestions(review.review_text);
-        message = "Gemini unavailable/rate-limited. Local fallback suggestions were used.";
+    const allowFallback = (process.env.ALLOW_AI_FALLBACK || "true").toLowerCase() === "true";
+    const instantMode = (process.env.AI_INSTANT_MODE || "false").toLowerCase() === "true";
+    const aiDeadlineMs = parsePositiveIntEnv("AI_RESPONSE_DEADLINE_MS", 5000);
+
+    if (instantMode) {
+      suggestions = buildFallbackSuggestions(review.review_text);
+      message = "Instant mode enabled: local suggestions returned immediately.";
+    } else {
+      const aiPromise: Promise<AiResult> = generateReplySuggestions(review.review_text, review.rating)
+        .then((generated) => ({ source: "longcat" as const, suggestions: generated }))
+        .catch((error) => ({ source: "error", error }));
+
+      const timeoutResult = { source: "timeout" as const };
+      const raceResult = await Promise.race([
+        aiPromise,
+        new Promise<typeof timeoutResult>((resolve) => setTimeout(() => resolve(timeoutResult), aiDeadlineMs)),
+      ]);
+
+      if (raceResult.source === "longcat") {
+        suggestions = raceResult.suggestions;
+      } else if (raceResult.source === "timeout") {
+        if (allowFallback) {
+          suggestions = buildFallbackSuggestions(review.review_text);
+          message = "LongCat is slow. Instant local fallback suggestions were used.";
+        } else {
+          const awaitedResult = await aiPromise;
+          if (awaitedResult.source === "longcat") {
+            suggestions = awaitedResult.suggestions;
+          } else {
+            throw awaitedResult.error;
+          }
+        }
       } else {
-        throw error;
+        const isLongCatError = isAppError(raceResult.error) && raceResult.error.code.includes("LONGCAT");
+        if (allowFallback && (isLongCatError || raceResult.error instanceof Error)) {
+          suggestions = buildFallbackSuggestions(review.review_text);
+          message = "LongCat unavailable. Instant local fallback suggestions were used.";
+        } else {
+          throw raceResult.error;
+        }
       }
     }
 
@@ -86,6 +129,10 @@ export async function POST(request: Request) {
 
     if (error instanceof SyntaxError) {
       return NextResponse.json({ error: "Invalid JSON payload.", code: "INVALID_JSON" }, { status: 400 });
+    }
+
+    if (error instanceof Error) {
+      return NextResponse.json({ error: error.message, code: "INTERNAL_ERROR" }, { status: 500 });
     }
 
     return NextResponse.json({ error: "Unexpected error", code: "INTERNAL_ERROR" }, { status: 500 });
