@@ -51,6 +51,14 @@ function formatRatingStars(rating: number | null) {
   return `${"\u2605".repeat(safeRating)}${"\u2606".repeat(5 - safeRating)}`;
 }
 
+function getStatusLabel(status: ReviewItem["status"]) {
+  return status === "resolved" ? "Approved" : "Pending";
+}
+
+function getStatusClasses(status: ReviewItem["status"]) {
+  return status === "resolved" ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100" : "bg-slate-100 text-slate-600 ring-1 ring-slate-200";
+}
+
 export function ReviewDashboardList({
   initialReviews,
   latestReviews,
@@ -63,7 +71,6 @@ export function ReviewDashboardList({
   const [approvingBySuggestion, setApprovingBySuggestion] = useState<Record<string, boolean>>({});
   const [errorByReview, setErrorByReview] = useState<Record<string, string>>({});
   const [infoByReview, setInfoByReview] = useState<Record<string, string>>({});
-  const [activeSuggestionByReview, setActiveSuggestionByReview] = useState<Record<string, string>>({});
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "resolved">("all");
   const [sortBy, setSortBy] = useState<"newest" | "oldest">("newest");
@@ -201,10 +208,6 @@ export function ReviewDashboardList({
           review.id === reviewId ? { ...review, suggestions: payload.suggestions ?? [] } : review,
         ),
       );
-      const firstSuggestionId = payload.suggestions?.[0]?.id;
-      if (firstSuggestionId) {
-        setActiveSuggestionByReview((prev) => ({ ...prev, [reviewId]: firstSuggestionId }));
-      }
       if (payload.message) {
         setInfoByReview((prev) => ({ ...prev, [reviewId]: payload.message! }));
       }
@@ -258,23 +261,6 @@ export function ReviewDashboardList({
     }
   }
 
-  function getActiveSuggestion(review: ReviewItem): SuggestionItem | null {
-    const orderedSuggestions = getOrderedSuggestions(review);
-    if (orderedSuggestions.length === 0) {
-      return null;
-    }
-
-    const fromState = activeSuggestionByReview[review.id];
-    if (fromState) {
-      const matched = orderedSuggestions.find((suggestion) => suggestion.id === fromState);
-      if (matched) {
-        return matched;
-      }
-    }
-
-    return orderedSuggestions[0];
-  }
-
   function getOrderedSuggestions(review: ReviewItem): SuggestionItem[] {
     const selected = review.suggestions.find((suggestion) => suggestion.is_selected);
     if (!selected) {
@@ -287,29 +273,29 @@ export function ReviewDashboardList({
   return (
     <>
       <section className="rise-in mb-4 grid gap-3 sm:grid-cols-3">
-        <div className="glass-card rounded-2xl p-4 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Total Reviews</p>
           <p className="mt-2 text-3xl font-semibold text-slate-900">{reviews.length}</p>
-          <p className="mt-2 text-xs text-slate-500">Resolve rate: {resolveRate}%</p>
+          <p className="mt-2 text-xs text-slate-500">Approval rate: {resolveRate}%</p>
           <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
             <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${resolveRate}%` }} />
           </div>
         </div>
-        <div className="rounded-2xl border border-amber-300/70 bg-gradient-to-br from-amber-50 to-orange-50 p-4 shadow-sm">
-          <p className="text-xs uppercase tracking-[0.12em] text-amber-700">Pending</p>
-          <p className="mt-2 text-3xl font-semibold text-amber-900">{pendingCount}</p>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Pending</p>
+          <p className="mt-2 text-3xl font-semibold text-slate-950">{pendingCount}</p>
         </div>
-        <div className="rounded-2xl border border-emerald-300/70 bg-gradient-to-br from-emerald-50 to-teal-50 p-4 shadow-sm">
-          <p className="text-xs uppercase tracking-[0.12em] text-emerald-700">Resolved</p>
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
+          <p className="text-xs uppercase tracking-[0.12em] text-emerald-700">Approved</p>
           <p className="mt-2 text-3xl font-semibold text-emerald-900">{resolvedCount}</p>
         </div>
       </section>
 
-      <div className="rise-in mb-4 grid gap-3 rounded-2xl border border-slate-200 bg-white/80 p-3 shadow-sm md:grid-cols-[1fr_auto_auto]">
+      <div className="rise-in mb-4 grid gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm md:grid-cols-[1fr_auto_auto]">
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search reviewer, source, review content..."
+          placeholder="Search reviews by name, content, or source..."
           className="ui-input rounded-xl px-3 py-2 text-sm outline-none"
         />
         <div className="flex items-center gap-2">
@@ -338,7 +324,7 @@ export function ReviewDashboardList({
               statusFilter === "resolved" ? "bg-emerald-600 text-white" : "bg-emerald-100 text-emerald-700"
             }`}
           >
-            Resolved
+            Approved
           </button>
         </div>
         <select
@@ -351,8 +337,8 @@ export function ReviewDashboardList({
         </select>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_290px]">
-        <section className="glass-card rise-in rounded-3xl p-4 sm:p-5">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_310px]">
+        <section className="rise-in rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
           <div className="mb-5 flex items-end justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Work Queue</p>
@@ -363,7 +349,7 @@ export function ReviewDashboardList({
                 <p className="mt-1 text-xs text-slate-500">Showing latest fetch for {activeFetchPlaceId}</p>
               ) : null}
             </div>
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
+            <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-indigo-700">
               Live Queue
             </span>
           </div>
@@ -385,24 +371,18 @@ export function ReviewDashboardList({
               {paginatedReviews.map((review) => (
                 <li
                   key={review.id}
-                  className="rounded-2xl border border-slate-200/80 bg-white/95 p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-[0_14px_30px_rgba(16,33,43,0.08)] sm:p-5"
+                  className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-indigo-200 hover:shadow-md sm:p-5"
                 >
                 <div className="mb-3 flex flex-wrap items-center gap-2">
-                  <span className="font-semibold text-slate-900">{review.reviewer_name ?? "Anonymous"}</span>
+                  <span className="font-semibold text-slate-950">{review.reviewer_name ?? "Anonymous"}</span>
                   <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
                     Source: {review.place_id === "manual-demo" ? "Manual Input" : review.place_id}
                   </span>
                   <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
                     {formatRatingStars(review.rating)}
                   </span>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-xs font-semibold uppercase ${
-                      review.status === "resolved"
-                        ? "bg-emerald-100 text-emerald-800"
-                        : "bg-amber-100 text-amber-800"
-                    }`}
-                  >
-                    {review.status}
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${getStatusClasses(review.status)}`}>
+                    {getStatusLabel(review.status)}
                   </span>
                 </div>
 
@@ -416,7 +396,7 @@ export function ReviewDashboardList({
                     type="button"
                     onClick={() => onGenerate(review.id)}
                     disabled={Boolean(loadingByReview[review.id])}
-                    className="rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-[0_8px_18px_rgba(37,99,235,0.35)] transition hover:-translate-y-0.5 hover:shadow-[0_12px_24px_rgba(37,99,235,0.38)] disabled:cursor-not-allowed disabled:from-slate-400 disabled:to-slate-400 disabled:shadow-none"
+                    className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                   >
                     {loadingByReview[review.id] ? "Generating..." : "Generate AI"}
                   </button>
@@ -434,81 +414,63 @@ export function ReviewDashboardList({
                 ) : null}
 
                 {review.suggestions.length > 0 ? (
-                  <div className="mt-4 space-y-2 rounded-2xl border border-indigo-100 bg-indigo-50/80 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-indigo-800">AI Suggestions</p>
+                  <div className="mt-4 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-3">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-indigo-700">AI Suggestions</p>
+                      <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-indigo-700 ring-1 ring-indigo-100">
+                        Confidence 92%
+                      </span>
+                    </div>
 
                     {(() => {
                       const selectedSuggestion = review.suggestions.find((suggestion) => suggestion.is_selected) ?? null;
-                      const orderedSuggestions = getOrderedSuggestions(review);
-                      const activeSuggestion = getActiveSuggestion(review);
-                      if (!activeSuggestion) {
-                        return null;
-                      }
-
-                      const activeIndex = review.suggestions.findIndex(
-                        (suggestion) => suggestion.id === activeSuggestion.id,
-                      );
+                      const suggestionsToShow = selectedSuggestion ? [selectedSuggestion] : getOrderedSuggestions(review);
 
                       return (
-                        <div className="space-y-2">
-                          {selectedSuggestion ? (
-                            <div className="flex flex-wrap gap-2">
-                              <span className="rounded-full bg-indigo-600 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.1em] text-white shadow-[0_8px_16px_rgba(79,70,229,0.35)]">
-                                Approved
-                              </span>
-                            </div>
-                          ) : (
-                            <div className="flex flex-wrap gap-2">
-                              {orderedSuggestions.map((suggestion, index) => {
-                                const activeId = activeSuggestion.id;
-                                const isActive = activeId === suggestion.id;
-                                return (
+                        <div className="grid gap-3 lg:grid-cols-3">
+                          {suggestionsToShow.map((suggestion, index) => (
+                            <article
+                              key={suggestion.id}
+                              className={`flex min-h-40 flex-col rounded-2xl border bg-white p-4 shadow-sm ${
+                                suggestion.is_selected ? "border-emerald-200 ring-2 ring-emerald-100" : "border-slate-200"
+                              }`}
+                            >
+                              <div className="mb-2 flex items-center justify-between gap-2">
+                                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-indigo-700">
+                                  {selectedSuggestion ? "Approved Reply" : `Option ${index + 1}`}
+                                </p>
+                                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                                  {suggestion.tone ?? "reply"}
+                                </span>
+                              </div>
+                              <p className="flex-1 text-sm leading-6 text-slate-700">{suggestion.content}</p>
+                              <div className="mt-4 flex flex-wrap gap-2">
+                                {selectedSuggestion ? (
+                                  <span className="inline-flex rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white">
+                                    Approved
+                                  </span>
+                                ) : (
                                   <button
-                                    key={suggestion.id}
                                     type="button"
-                                    onClick={() =>
-                                      setActiveSuggestionByReview((prev) => ({ ...prev, [review.id]: suggestion.id }))
-                                    }
-                                    className={`rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.1em] transition ${
-                                      isActive
-                                        ? "bg-indigo-600 text-white shadow-[0_8px_16px_rgba(79,70,229,0.35)]"
-                                        : "bg-white text-indigo-700 hover:bg-indigo-100"
-                                    }`}
+                                    onClick={() => onApprove(review.id, suggestion.id)}
+                                    disabled={Boolean(approvingBySuggestion[suggestion.id])}
+                                    className="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                                   >
-                                    {`Option ${index + 1}`}
+                                    {approvingBySuggestion[suggestion.id] ? "Approving..." : "Approve"}
                                   </button>
-                                );
-                              })}
-                            </div>
-                          )}
-                          <div className="rounded-xl bg-white p-3 text-sm text-slate-700 shadow-sm">
-                            <p className="mb-1 text-xs font-semibold uppercase tracking-[0.1em] text-indigo-700">
-                              {selectedSuggestion ? "Approved Reply" : `Option ${activeIndex + 1}`} -{" "}
-                              {activeSuggestion.tone ?? "reply"}
-                            </p>
-                          <p className="leading-relaxed">{activeSuggestion.content}</p>
-                          <div className="mt-2">
-                            {selectedSuggestion ? (
-                              <span className="inline-flex rounded-xl bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_6px_16px_rgba(16,185,129,0.35)]">
-                                Approved
-                              </span>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => onApprove(review.id, activeSuggestion.id)}
-                                disabled={Boolean(approvingBySuggestion[activeSuggestion.id])}
-                                className="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_6px_16px_rgba(16,185,129,0.35)] transition hover:-translate-y-0.5 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-400 disabled:shadow-none"
-                              >
-                                {approvingBySuggestion[activeSuggestion.id] ? "Approving..." : "Approve"}
-                              </button>
-                            )}
-                          </div>
-                        </div>
+                                )}
+                              </div>
+                            </article>
+                          ))}
                         </div>
                       );
                     })()}
                   </div>
-                ) : null}
+                ) : (
+                  <p className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
+                    No AI suggestions yet. Click Generate AI, or wait for background generation after Fetch.
+                  </p>
+                )}
                 </li>
               ))}
             </ul>
@@ -541,7 +503,7 @@ export function ReviewDashboardList({
           ) : null}
         </section>
 
-        <aside className="glass-card rise-in h-fit rounded-3xl p-4 xl:sticky xl:top-4">
+        <aside className="rise-in h-fit rounded-3xl border border-slate-200 bg-white p-4 shadow-sm xl:sticky xl:top-4">
           <div className="mb-3 space-y-3">
             <div className="flex items-end justify-between gap-2">
               <h3 className="text-lg font-semibold text-slate-900">Review Archive</h3>
@@ -586,14 +548,8 @@ export function ReviewDashboardList({
                     <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
                       {formatRatingStars(review.rating)}
                     </span>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${
-                        review.status === "resolved"
-                          ? "bg-emerald-100 text-emerald-800"
-                          : "bg-amber-100 text-amber-800"
-                      }`}
-                    >
-                      {review.status}
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${getStatusClasses(review.status)}`}>
+                      {getStatusLabel(review.status)}
                     </span>
                   </div>
                   <p className="line-clamp-2 text-xs leading-relaxed text-slate-700">{review.review_text}</p>

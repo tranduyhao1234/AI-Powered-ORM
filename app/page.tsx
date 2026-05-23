@@ -22,6 +22,19 @@ type ReviewRow = {
   suggestions: SuggestionRow[];
 };
 
+const navItems = [
+  { label: "Dashboard", icon: "M3 13h8V3H3v10Zm0 8h8v-6H3v6Zm10 0h8V11h-8v10Zm0-18v6h8V3h-8Z", active: true },
+  
+];
+
+function OutlineIcon({ path }: { path: string }) {
+  return (
+    <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24">
+      <path d={path} />
+    </svg>
+  );
+}
+
 export default async function Page() {
   const supabase = await createClient();
   const { data: reviews, error } = await supabase
@@ -47,34 +60,72 @@ export default async function Page() {
   const latestFive = safeReviews.slice(0, 5);
 
   return (
-    <main className="dashboard-shell relative mx-auto min-h-screen w-full max-w-7xl px-4 py-6 sm:px-6 md:px-8 md:py-8">
-      <div className="pointer-events-none absolute -left-12 top-8 h-40 w-40 rounded-full bg-emerald-300/25 blur-3xl" />
-      <div className="pointer-events-none absolute -right-10 top-24 h-44 w-44 rounded-full bg-amber-300/25 blur-3xl" />
-
-      <header className="rise-in mb-5 rounded-3xl border border-white/50 bg-white/70 p-5 shadow-[0_16px_36px_rgba(16,33,43,0.08)] backdrop-blur-xl sm:p-6">
-        <div className="mb-3 flex flex-wrap gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
-          <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-800">AI Review Copilot</span>
-          <span className="rounded-full bg-sky-100 px-3 py-1 text-sky-800">Realtime Dashboard</span>
+    <main className="dashboard-shell min-h-screen bg-slate-50 text-slate-950 lg:grid lg:grid-cols-[264px_minmax(0,1fr)]">
+      <aside className="border-b border-slate-200 bg-white/95 px-4 py-4 backdrop-blur lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r lg:px-5">
+        <div className="flex items-center justify-between lg:block">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-indigo-600 text-sm font-bold text-white shadow-lg shadow-indigo-600/20">
+              AI
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-950">ReviewAI</p>
+              <p className="text-xs text-slate-500">AI ORM Console</p>
+            </div>
+          </div>
+          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 lg:hidden">
+            Online
+          </span>
         </div>
-        <h1 className="text-balance text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">
-          AI-Powered ORM Review Studio
-        </h1>
-        <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-600">
-          Fetch or AI-generate reviews, generate reply options, and approve responses from one focused workspace.
-        </p>
-      </header>
 
-      <div className="rise-in mb-5">
-        <PlaceReviewFetcher />
-      </div>
+        <nav className="mt-4 flex gap-2 overflow-auto lg:mt-8 lg:block lg:space-y-1 lg:overflow-visible">
+          {navItems.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              className={`flex shrink-0 items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition lg:w-full ${
+                item.active
+                  ? "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100"
+                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+              }`}
+            >
+              <OutlineIcon path={item.icon} />
+              {item.label}
+            </button>
+          ))}
+        </nav>
 
-      {error ? (
-        <p className="glass-card rounded-xl border-red-200 bg-red-50/90 p-4 text-sm font-medium text-red-700">
-          Could not load reviews from database: {error.message}
-        </p>
-      ) : (
-        <ReviewDashboardList initialReviews={safeReviews} latestReviews={latestFive} />
-      )}
+        <div className="mt-8 hidden rounded-2xl border border-slate-200 bg-slate-50 p-4 lg:block">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Workflow</p>
+          <p className="mt-2 text-sm font-medium text-slate-900">Fetch reviews, review AI replies, approve in one pass.</p>
+        </div>
+      </aside>
+
+      <section className="min-w-0">
+        <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/85 px-4 py-3 backdrop-blur-xl sm:px-6 lg:px-8">
+          <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-600">Dashboard</p>
+              <h1 className="text-xl font-semibold tracking-tight text-slate-950 sm:text-2xl">Review Management</h1>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="hidden rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 sm:inline-flex">
+                AI online
+              </span>
+              <div className="grid h-9 w-9 place-items-center rounded-full bg-slate-900 text-xs font-semibold text-white">TM</div>
+            </div>
+          </div>
+        </header>
+        <div className="mx-auto max-w-7xl space-y-5 px-4 py-5 sm:px-6 lg:px-8">
+          <PlaceReviewFetcher />
+          {error ? (
+            <p className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">
+              Could not load reviews from database: {error.message}
+            </p>
+          ) : (
+            <ReviewDashboardList initialReviews={safeReviews} latestReviews={latestFive} />
+          )}
+        </div>
+      </section>
     </main>
   );
 }

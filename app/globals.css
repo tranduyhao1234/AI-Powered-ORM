@@ -2,25 +2,20 @@
 
 :root {
   color-scheme: light;
-  --bg-ink: #10212b;
-  --bg-paper: #f5f8f7;
-  --card-bg: rgba(255, 255, 255, 0.86);
-  --card-border: rgba(31, 58, 72, 0.14);
-  --brand: #136f63;
-  --brand-alt: #ef8354;
-  --text-main: #10212b;
-  --text-soft: #5c6d75;
-  --font-display: "Trebuchet MS", "Gill Sans", "Avenir Next", "Segoe UI", sans-serif;
-  --font-body: "Source Sans Pro", "Lucida Sans", "Trebuchet MS", sans-serif;
+  --card-bg: rgba(255, 255, 255, 0.92);
+  --card-border: rgba(15, 23, 42, 0.1);
+  --text-main: #0f172a;
+  --font-display: Inter, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+  --font-body: Inter, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
 }
 
 body {
   margin: 0;
   min-height: 100vh;
   background:
-    radial-gradient(circle at 10% 0%, rgba(99, 164, 140, 0.26), transparent 38%),
-    radial-gradient(circle at 88% 8%, rgba(246, 176, 80, 0.22), transparent 34%),
-    linear-gradient(180deg, #f7fbfa 0%, #eef3f6 52%, #edf2f1 100%);
+    radial-gradient(circle at 16% -10%, rgba(99, 102, 241, 0.08), transparent 34%),
+    radial-gradient(circle at 88% 4%, rgba(14, 165, 233, 0.08), transparent 30%),
+    linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
   color: var(--text-main);
   font-family: var(--font-body);
 }
@@ -49,14 +44,14 @@ h3 {
 }
 
 .ui-input {
-  border: 1px solid rgba(16, 33, 43, 0.16);
-  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  background: rgba(255, 255, 255, 0.96);
   transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
 }
 
 .ui-input:focus {
-  border-color: rgba(19, 111, 99, 0.7);
-  box-shadow: 0 0 0 4px rgba(19, 111, 99, 0.16);
+  border-color: rgba(79, 70, 229, 0.72);
+  box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.13);
   transform: translateY(-1px);
 }
 

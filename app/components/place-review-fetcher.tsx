@@ -22,14 +22,6 @@ type FetchResult = {
   error?: string;
 };
 
-function formatRatingStars(rating: number | null) {
-  if (typeof rating !== "number" || !Number.isFinite(rating)) {
-    return "No rating";
-  }
-  const safeRating = Math.max(1, Math.min(5, Math.round(rating)));
-  return `${"\u2605".repeat(safeRating)}${"\u2606".repeat(5 - safeRating)}`;
-}
-
 export function PlaceReviewFetcher() {
   const router = useRouter();
   const [placeId, setPlaceId] = useState("");
@@ -72,21 +64,21 @@ export function PlaceReviewFetcher() {
   }
 
   return (
-    <section className="glass-card space-y-4 rounded-3xl p-4 sm:p-5">
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
-        <div className="space-y-1">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Data Pipeline</p>
-          <h2 className="text-xl font-semibold text-slate-900">Fetch or Generate Feedback</h2>
-          <p className="max-w-2xl text-sm text-slate-600">
-            Enter a Place ID. Google reviews are used when available; LongCat creates AI demo feedback for free mode.
+    <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        <div className="space-y-1.5">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-600">Input & Actions</p>
+          <h2 className="text-xl font-semibold text-slate-950">Fetch Reviews</h2>
+          <p className="max-w-2xl text-sm leading-6 text-slate-600">
+            Enter a Google Place ID. In free/demo mode, LongCat can generate realistic feedback and background AI reply suggestions.
           </p>
         </div>
-        <p className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-          Latest 5 saved to database
+        <p className="inline-flex w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+          Latest 5 reviews sync into the Work Queue
         </p>
       </div>
 
-      <form className="grid gap-3 sm:grid-cols-[1fr_auto]" onSubmit={onSubmit}>
+      <form className="mt-5 grid gap-3 md:grid-cols-[1fr_auto]" onSubmit={onSubmit}>
         <label className="sr-only" htmlFor="placeId">
           Place ID
         </label>
@@ -101,48 +93,31 @@ export function PlaceReviewFetcher() {
         <button
           type="submit"
           disabled={!canSubmit}
-          className="rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-5 py-3 text-sm font-semibold text-white shadow-[0_8px_20px_rgba(19,111,99,0.35)] transition hover:-translate-y-0.5 hover:shadow-[0_12px_26px_rgba(19,111,99,0.4)] disabled:cursor-not-allowed disabled:from-slate-400 disabled:to-slate-400 disabled:shadow-none"
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
         >
-          {loading ? "Fetching..." : "Fetch"}
+          {loading ? (
+            <>
+              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+              Fetching...
+            </>
+          ) : (
+            "Fetch Reviews"
+          )}
         </button>
       </form>
 
       {error ? (
-        <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700">{error}</p>
+        <p className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700">{error}</p>
       ) : null}
 
       {result ? (
-        <div className="space-y-3">
-          <div className="grid gap-2 md:grid-cols-[1fr_1fr]">
-            <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
-              Saved <strong>{result.count}</strong> latest reviews for <strong>{result.placeId}</strong>.
-            </p>
-            {result.message ? (
-              <p className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">{result.message}</p>
-            ) : null}
-          </div>
-
-          <ul className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
-            {result.reviews.map((review) => (
-              <li key={review.id} className="rounded-xl border border-slate-200/80 bg-white/90 p-3 shadow-sm">
-                <div className="mb-1 flex flex-wrap items-center gap-2 text-sm">
-                  <span className="font-semibold text-slate-900">{review.reviewer_name ?? "Anonymous"}</span>
-                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                    {formatRatingStars(review.rating)}
-                  </span>
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs uppercase tracking-wide text-slate-600">
-                    {review.status}
-                  </span>
-                </div>
-                <p className="line-clamp-2 text-sm leading-relaxed text-slate-700">{review.review_text}</p>
-                {review.review_time ? (
-                  <p className="mt-1 text-xs text-slate-500">
-                    {new Date(review.review_time).toLocaleString()}
-                  </p>
-                ) : null}
-              </li>
-            ))}
-          </ul>
+        <div className="mt-4 grid gap-3 md:grid-cols-[0.9fr_1.1fr]">
+          <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+            Saved <strong>{result.count}</strong> reviews for <strong>{result.placeId}</strong>. Work Queue updated.
+          </p>
+          {result.message ? (
+            <p className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-800">{result.message}</p>
+          ) : null}
         </div>
       ) : null}
     </section>
