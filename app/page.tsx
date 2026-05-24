@@ -2,6 +2,8 @@ import { PlaceReviewFetcher } from "@/app/components/place-review-fetcher";
 import { ReviewDashboardList } from "@/app/components/review-dashboard-list";
 import { createClient } from "@/utils/supabase/server";
 
+export const dynamic = "force-dynamic";
+
 type SuggestionRow = {
   id: string;
   review_id: string;
