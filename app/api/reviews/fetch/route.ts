@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { AppError, isAppError } from "@/lib/app-error";
-import { generateReplySuggestions } from "@/lib/gemini";
 import { fetchGooglePlaceReviews } from "@/lib/google-places";
 import { fetchLongCatPlaceReviews } from "@/lib/longcat-reviews";
 import { buildSampleReviews } from "@/lib/sample-reviews";
@@ -42,34 +41,19 @@ function isLongCatRelatedErrorCode(code: string) {
   return code.includes("LONGCAT");
 }
 
-async function generateAndSaveAiSuggestions(supabase: SupabaseClient, review: ReviewRow) {
-  const suggestions = await generateReplySuggestions(review.review_text, review.rating);
-
-  const { error: deleteError } = await supabase.from("ai_suggestions").delete().eq("review_id", review.id);
-  if (deleteError) {
-    throw new AppError(deleteError.message, 500, "AI_SUGGESTION_DELETE_ERROR");
-  }
-
-  const insertPayload = suggestions.map((suggestion) => ({
+async function enqueueAiGenerationJobs(supabase: SupabaseClient, reviews: ReviewRow[]) {
+  const jobPayload = reviews.map((review) => ({
     review_id: review.id,
-    tone: suggestion.tone,
-    content: suggestion.content,
-    is_selected: false,
+    status: "queued",
+    priority: 0,
+    attempts: 0,
+    error_message: null,
   }));
 
-  const { error: insertError } = await supabase.from("ai_suggestions").insert(insertPayload);
-  if (insertError) {
-    throw new AppError(insertError.message, 500, "AI_SUGGESTION_INSERT_ERROR");
+  const { error } = await supabase.from("ai_generation_jobs").upsert(jobPayload, { onConflict: "review_id" });
+  if (error) {
+    throw new AppError(error.message, 500, "AI_JOB_ENQUEUE_ERROR");
   }
-}
-
-function runAutoGenerateInBackground(supabase: SupabaseClient, reviews: ReviewRow[]) {
-  void Promise.allSettled(reviews.map((review) => generateAndSaveAiSuggestions(supabase, review))).then((results) => {
-    const generatedCount = results.filter((result) => result.status === "fulfilled").length;
-    if (generatedCount !== reviews.length) {
-      console.warn(`Auto-generate AI replies completed for ${generatedCount}/${reviews.length} reviews.`);
-    }
-  });
 }
 
 export async function POST(request: Request) {
@@ -182,8 +166,8 @@ export async function POST(request: Request) {
     let aiMessage: string | null = null;
 
     if (autoGenerateAiOnFetch && visibleReviews.length > 0) {
-      runAutoGenerateInBackground(supabase, visibleReviews);
-      aiMessage = `AI replies are generating in the background for ${visibleReviews.length} reviews.`;
+      await enqueueAiGenerationJobs(supabase, visibleReviews);
+      aiMessage = `AI generation queued for ${visibleReviews.length} reviews.`;
     }
 
     const { data: refreshedReviews, error: refreshedError } = await supabase

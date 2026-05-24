@@ -27,6 +27,18 @@ create table if not exists public.ai_suggestions (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.ai_generation_jobs (
+  id uuid primary key default gen_random_uuid(),
+  review_id uuid not null references public.reviews(id) on delete cascade,
+  status text not null default 'queued' check (status in ('queued', 'processing', 'completed', 'failed')),
+  priority integer not null default 0,
+  attempts integer not null default 0,
+  error_message text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (review_id)
+);
+
 create index if not exists idx_reviews_place_id on public.reviews(place_id);
 create index if not exists idx_reviews_status on public.reviews(status);
 create index if not exists idx_reviews_review_time_created_at on public.reviews(review_time desc, created_at desc);
@@ -35,6 +47,9 @@ create index if not exists idx_reviews_place_id_review_time_created_at
 create index if not exists idx_ai_suggestions_review_id on public.ai_suggestions(review_id);
 create index if not exists idx_ai_suggestions_review_id_created_at
   on public.ai_suggestions(review_id, created_at desc);
+create index if not exists idx_ai_generation_jobs_status_priority_created_at
+  on public.ai_generation_jobs(status, priority desc, created_at asc);
+create index if not exists idx_ai_generation_jobs_review_id on public.ai_generation_jobs(review_id);
 
 create or replace function public.set_updated_at()
 returns trigger as $$
@@ -47,4 +62,9 @@ $$ language plpgsql;
 drop trigger if exists trg_reviews_set_updated_at on public.reviews;
 create trigger trg_reviews_set_updated_at
 before update on public.reviews
+for each row execute function public.set_updated_at();
+
+drop trigger if exists trg_ai_generation_jobs_set_updated_at on public.ai_generation_jobs;
+create trigger trg_ai_generation_jobs_set_updated_at
+before update on public.ai_generation_jobs
 for each row execute function public.set_updated_at();

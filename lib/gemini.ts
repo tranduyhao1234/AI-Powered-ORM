@@ -15,9 +15,27 @@ type LongCatResponse = {
   }>;
 };
 
+type GenerateReplyOptions = {
+  maxAttempts?: number;
+  timeoutMs?: number;
+};
+
 const DEFAULT_LONGCAT_MODEL = "LongCat-Flash-Chat";
+const DEFAULT_LONGCAT_FALLBACK_MODEL = "LongCat-Flash-Lite";
 const DEFAULT_LONGCAT_BASE_URL = "https://api.longcat.chat/openai/v1";
 const DEFAULT_TONES = ["standard", "friendly", "problem-solving"] as const;
+
+function parsePositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
 
 function normalizeBaseUrl(input: string) {
   return input.endsWith("/") ? input.slice(0, -1) : input;
@@ -123,6 +141,102 @@ function extractSuggestionsArray(input: unknown): unknown[] {
   return [];
 }
 
+function normalizeKeyName(key: string) {
+  return key.toLowerCase().replace(/[_\s-]+/g, "");
+}
+
+function normalizeToneFromKey(key: string, index: number): string {
+  const normalizedKey = normalizeKeyName(key);
+  if (normalizedKey.includes("friendly") || normalizedKey.includes("thanthien")) {
+    return "friendly";
+  }
+  if (normalizedKey.includes("problem") || normalizedKey.includes("solution") || normalizedKey.includes("khacphuc")) {
+    return "problem-solving";
+  }
+  if (normalizedKey.includes("standard") || normalizedKey.includes("tieuchuan")) {
+    return "standard";
+  }
+  return DEFAULT_TONES[index % DEFAULT_TONES.length];
+}
+
+function normalizeSuggestionsFromKeyedObject(input: unknown): Suggestion[] {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return [];
+  }
+
+  const safeInput = input as Record<string, unknown>;
+  const containerKeys = ["suggestions", "replies", "options", "responses", "data"];
+  for (const key of containerKeys) {
+    const value = safeInput[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const nested = normalizeSuggestionsFromKeyedObject(value);
+      if (nested.length > 0) {
+        return nested;
+      }
+    }
+  }
+
+  const preferredKeys = [
+    "standard",
+    "friendly",
+    "problem_solving",
+    "problem-solving",
+    "problemSolving",
+    "option1",
+    "option_1",
+    "reply1",
+    "response1",
+    "option2",
+    "option_2",
+    "reply2",
+    "response2",
+    "option3",
+    "option_3",
+    "reply3",
+    "response3",
+  ];
+  const entries = [
+    ...preferredKeys
+      .filter((key) => Object.prototype.hasOwnProperty.call(safeInput, key))
+      .map((key) => [key, safeInput[key]] as const),
+    ...Object.entries(safeInput).filter(([key]) => !preferredKeys.includes(key)),
+  ];
+
+  const mapped = entries
+    .map<Suggestion | null>(([key, value], index) => {
+      if (typeof value === "string" && value.trim()) {
+        return {
+          tone: normalizeToneFromKey(key, index),
+          content: value.trim(),
+        };
+      }
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        const content = extractSuggestionContent(value as Record<string, unknown>);
+        if (content) {
+          return {
+            tone: normalizeToneFromKey(key, index),
+            content,
+          };
+        }
+      }
+      return null;
+    })
+    .filter((item): item is Suggestion => Boolean(item))
+    .slice(0, 3);
+
+  if (mapped.length > 0) {
+    return mapped;
+  }
+
+  const anyStringValues = Object.values(safeInput)
+    .filter((value): value is string => typeof value === "string" && value.trim().length >= 12)
+    .slice(0, 3);
+  return anyStringValues.map((content, index) => ({
+    tone: DEFAULT_TONES[index % DEFAULT_TONES.length],
+    content: content.trim(),
+  }));
+}
+
 function extractSuggestionContent(item: Record<string, unknown>): string {
   const directKeys = ["content", "reply", "text", "message", "body"];
   for (const key of directKeys) {
@@ -149,10 +263,39 @@ function extractSuggestionContent(item: Record<string, unknown>): string {
 }
 
 function normalizeSuggestionsFromJson(input: unknown): Suggestion[] {
+  const fromKeyedObject = normalizeSuggestionsFromKeyedObject(input);
+  if (fromKeyedObject.length > 0) {
+    return fromKeyedObject;
+  }
+
   const suggestions = extractSuggestionsArray(input);
+  if (suggestions.length === 1) {
+    const onlySuggestion = suggestions[0];
+    const nestedCandidate =
+      typeof onlySuggestion === "string"
+        ? tryParseJson(onlySuggestion)
+        : onlySuggestion && typeof onlySuggestion === "object"
+          ? tryParseJson(extractSuggestionContent(onlySuggestion as Record<string, unknown>))
+          : null;
+
+    if (nestedCandidate) {
+      const nestedSuggestions = normalizeSuggestionsFromJson(nestedCandidate);
+      if (nestedSuggestions.length > 1) {
+        return nestedSuggestions;
+      }
+    }
+  }
+
   return suggestions
     .map((item, index) => {
       if (typeof item === "string" && item.trim()) {
+        const nestedJson = tryParseJson(item);
+        if (nestedJson) {
+          const nestedSuggestions = normalizeSuggestionsFromJson(nestedJson);
+          if (nestedSuggestions.length > 0) {
+            return nestedSuggestions[0];
+          }
+        }
         return {
           tone: DEFAULT_TONES[index % DEFAULT_TONES.length],
           content: item.trim(),
@@ -172,6 +315,13 @@ function normalizeSuggestionsFromJson(input: unknown): Suggestion[] {
       if (!content) {
         return null;
       }
+      const nestedJson = tryParseJson(content);
+      if (nestedJson) {
+        const nestedSuggestions = normalizeSuggestionsFromJson(nestedJson);
+        if (nestedSuggestions.length > 0) {
+          return nestedSuggestions[index % nestedSuggestions.length];
+        }
+      }
       return { tone, content };
     })
     .filter((item): item is Suggestion => Boolean(item));
@@ -180,7 +330,7 @@ function normalizeSuggestionsFromJson(input: unknown): Suggestion[] {
 function normalizeSuggestionsFromPlainText(rawText: string): Suggestion[] {
   const lines = rawText
     .split(/\r?\n/)
-    .map((line) => line.trim().replace(/^[-*•\d.)\s]+/, ""))
+    .map((line) => line.trim().replace(/^[-*\d.)\s]+/, ""))
     .filter((line) => line.length >= 12)
     .filter((line) => !line.includes('{"suggestions"'))
     .filter((line) => !line.includes('"tone"'))
@@ -249,24 +399,7 @@ function extractSuggestionsFromSentences(rawText: string): Suggestion[] {
 }
 
 function ensureExactlyThreeSuggestions(input: Suggestion[]): Suggestion[] {
-  if (input.length === 0) {
-    return [];
-  }
-
-  const suggestions = input.slice(0, 3);
-  const filler: Record<(typeof DEFAULT_TONES)[number], string> = {
-    standard: "Cảm ơn bạn đã chia sẻ phản hồi. Chúng tôi sẽ tiếp tục cải thiện chất lượng phục vụ.",
-    friendly: "Cảm ơn bạn đã ghé quán. Tụi mình rất trân trọng góp ý và mong được phục vụ bạn tốt hơn lần tới.",
-    "problem-solving":
-      "Xin lỗi vì trải nghiệm chưa trọn vẹn. Chúng tôi đã ghi nhận và đang xử lý để tránh lặp lại.",
-  };
-
-  while (suggestions.length < 3) {
-    const tone = DEFAULT_TONES[suggestions.length];
-    suggestions.push({ tone, content: filler[tone] });
-  }
-
-  return suggestions;
+  return input.slice(0, 3);
 }
 
 function parseSuggestionsFromModelContent(rawContent: string): Suggestion[] {
@@ -299,7 +432,7 @@ function parseSuggestionsFromModelContent(rawContent: string): Suggestion[] {
 }
 
 function hasVietnameseMarkers(text: string) {
-  return /[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]/i.test(text);
+  return /[^\x00-\x7F]/.test(text);
 }
 
 function isLikelyEnglishSentence(text: string) {
@@ -368,17 +501,6 @@ function hasReplyVoice(text: string) {
   return /\b(cam on|xin loi|chung toi|doi ngu|tui minh|mong ban|hy vong)\b/i.test(normalizeForMatch(text));
 }
 
-function shortIssuePreview(text: string) {
-  const normalized = text
-    .replace(/\(sample for [^)]+\)/gi, "")
-    .trim()
-    .replace(/\s+/g, " ");
-  if (normalized.length <= 90) {
-    return normalized;
-  }
-  return `${normalized.slice(0, 87)}...`;
-}
-
 function hasNegativeIssue(reviewText: string) {
   return /\b(cham|lau|te|kem|ban|lanh|dat|that vong|khong hai long|phien|loi|sai|thieu|on ao|kho chiu|hoi cham|mon len cham|doi lau)\b/i.test(
     normalizeForMatch(reviewText),
@@ -387,57 +509,17 @@ function hasNegativeIssue(reviewText: string) {
 
 function isClearlyPositiveReview(reviewText: string, rating?: number | null) {
   const normalized = normalizeForMatch(reviewText);
-  const positive = /\b(ngon|nhanh|tot|tuyet|hai long|quay lai|than thien|sach|de thuong|ung ho|thich)\b/i.test(
+  const positive = /\b(ngon|nhanh|tot|tuyet|hai long|quay lai|than thien|sach|de thuong|ung ho|thich|chuyen nghiep)\b/i.test(
     normalized,
   );
   const noNegativeIssue = !hasNegativeIssue(reviewText);
   return noNegativeIssue && ((typeof rating === "number" && rating >= 4) || positive);
 }
 
-function buildReplyFromIssue(reviewText: string, tone: string, rating?: number | null) {
-  const issue = shortIssuePreview(reviewText);
-  const positiveReview = isClearlyPositiveReview(reviewText, rating);
-  if (tone.includes("friendly")) {
-    return (
-      `Cảm ơn bạn đã ghé quán và chia sẻ thật lòng. Về góp ý "${issue}", ` +
-      (positiveReview
-        ? "tụi mình rất vui khi bạn hài lòng và mong sớm được đón bạn quay lại."
-        : "tụi mình đã ghi nhận và sẽ cải thiện tốc độ phục vụ để trải nghiệm lần tới tốt hơn.")
-    );
-  }
-  if (tone.includes("problem")) {
-    if (positiveReview) {
-      return (
-        `Cảm ơn bạn đã đánh giá tích cực về "${issue}". ` +
-        "Chúng tôi sẽ tiếp tục duy trì chất lượng món ăn và tốc độ phục vụ để mỗi lần ghé thăm đều trọn vẹn."
-      );
-    }
-    return (
-      `Xin lỗi bạn vì trải nghiệm chưa trọn vẹn, đặc biệt ở điểm "${issue}". ` +
-      "Chúng tôi đã thông tin đến đội ngũ và ưu tiên xử lý ngay để tránh lặp lại."
-    );
-  }
-  return (
-    `Cảm ơn bạn đã phản hồi. Chúng tôi đã ghi nhận ý kiến "${issue}" ` +
-    (positiveReview
-      ? "và sẽ tiếp tục giữ vững chất lượng để phục vụ bạn tốt hơn trong những lần tới."
-      : "và sẽ rà soát quy trình để phục vụ nhanh hơn trong các lần tiếp theo.")
-  );
-}
-
 function normalizeSuggestionToReply(reviewText: string, suggestion: Suggestion, rating?: number | null): Suggestion {
-  const content = suggestion.content.trim();
-  const summaryLike = isSummaryLikeReply(content) || /\b(can cai thien|nen cai thien|tong quan)\b/i.test(normalizeForMatch(content));
-  const missingReplyVoice = !hasReplyVoice(content);
-  const apologyForPositiveReview =
-    isClearlyPositiveReview(reviewText, rating) && /\b(xin loi|rat tiec|sorry|apologize)\b/i.test(normalizeForMatch(content));
-  if (!summaryLike && !missingReplyVoice && !apologyForPositiveReview) {
-    return suggestion;
-  }
-
   return {
     tone: suggestion.tone,
-    content: buildReplyFromIssue(reviewText, suggestion.tone.toLowerCase(), rating),
+    content: suggestion.content.trim(),
   };
 }
 
@@ -445,21 +527,17 @@ function normalizeSuggestionsToReplies(reviewText: string, suggestions: Suggesti
   return suggestions.map((item) => normalizeSuggestionToReply(reviewText, item, rating));
 }
 
-function buildContextualReplySet(reviewText: string, rating?: number | null): Suggestion[] {
-  return DEFAULT_TONES.map((tone) => ({
-    tone,
-    content: buildReplyFromIssue(reviewText, tone, rating),
-  }));
+function containsApology(text: string) {
+  return /\b(xin loi|rat tiec|sorry|apologize|apology)\b/i.test(normalizeForMatch(text));
 }
 
 function finalizeSuggestionsForReview(reviewText: string, suggestions: Suggestion[], rating?: number | null) {
-  if (suggestions.length === 0) {
-    return buildContextualReplySet(reviewText, rating);
-  }
-
   const normalized = normalizeSuggestionsToReplies(reviewText, ensureExactlyThreeSuggestions(suggestions), rating);
-  if (normalized.length !== 3 || isLowQualityForReview(reviewText, normalized)) {
-    return buildContextualReplySet(reviewText, rating);
+  if (normalized.length !== 3) {
+    throw new AppError("LongCat output did not return exactly 3 valid suggestions.", 502, "LONGCAT_INVALID_OUTPUT");
+  }
+  if (isClearlyPositiveReview(reviewText, rating) && normalized.some((suggestion) => containsApology(suggestion.content))) {
+    throw new AppError("LongCat output apologized for a positive review.", 502, "LONGCAT_LOW_QUALITY");
   }
 
   return normalized;
@@ -494,15 +572,73 @@ function isLowQualityForReview(reviewText: string, suggestions: Suggestion[]) {
   return englishLikeCount >= 1 || summaryLikeCount >= 1 || weakVoiceCount >= 2 || noOverlapCount >= 2;
 }
 
-function buildSuggestionPrompt(normalizedReviewText: string, rating?: number | null) {
-  const reviewExcerpt = normalizedReviewText.slice(0, 400);
+function buildSuggestionPrompt(normalizedReviewText: string, rating?: number | null, retry = false) {
+  const reviewExcerpt = normalizedReviewText.slice(0, 220);
   const ratingInstruction =
-    typeof rating === "number" ? `Customer rating: ${rating}/5. If rating is 4 or 5 and the review is positive, do not apologize.\n` : "";
+    typeof rating === "number"
+      ? `Rating: ${rating}/5. If rating is 4-5 and review is positive, do not apologize.\n`
+      : "";
+  const retryInstruction = retry
+    ? "Previous output was invalid. Return ONLY this exact JSON shape with 3 string values.\n"
+    : "";
   return (
-    'JSON only: {"suggestions":[{"tone":"standard","content":"..."},{"tone":"friendly","content":"..."},{"tone":"problem-solving","content":"..."}]}\n' +
-    "Write all replies in Vietnamese with full diacritics. Do not translate to English. These must be direct customer replies from the business to the customer, not review summaries or internal notes. Start with Cảm ơn or Xin lỗi. Mention the actual issue in the review. Return exactly 3 replies, each under 60 words.\n\n" +
+    'Return JSON only in this exact shape: {"standard":"...","friendly":"...","problem_solving":"..."}\n' +
+    retryInstruction +
+    "Vietnamese replies with diacritics. Mention review details. Each under 30 words. Do not summarize. Apologize only for real problems; positive reviews should be thanked, not apologized.\n\n" +
     `${ratingInstruction}Review:\n${reviewExcerpt}`
   );
+}
+
+function buildSingleSuggestionPrompt(normalizedReviewText: string, tone: string, rating?: number | null) {
+  const reviewExcerpt = normalizedReviewText.slice(0, 220);
+  const toneInstruction: Record<string, string> = {
+    standard: "Tone: standard, concise and professional.",
+    friendly: "Tone: friendly, warm and natural.",
+    "problem-solving": "Tone: problem-solving, mention concrete action. Apologize only if the review reports a real problem.",
+  };
+  const ratingInstruction =
+    typeof rating === "number"
+      ? `Rating: ${rating}/5. If rating is 4-5 and review is positive, do not apologize.`
+      : "";
+
+  return (
+    'Return JSON only: {"reply":"..."}\n' +
+    `${toneInstruction[tone] ?? toneInstruction.standard}\n` +
+    `${ratingInstruction}\n` +
+    "Vietnamese with full diacritics. Direct customer-facing business reply. Mention review details. Under 35 words. Do not summarize.\n\n" +
+    `Review:\n${reviewExcerpt}`
+  );
+}
+
+function parseSingleReplyFromModelContent(rawContent: string) {
+  const parsed = tryParseJson(rawContent);
+  if (typeof parsed === "string" && parsed.trim()) {
+    return parsed.trim();
+  }
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const content = extractSuggestionContent(parsed as Record<string, unknown>);
+    if (content) {
+      return content;
+    }
+    const firstString = Object.values(parsed as Record<string, unknown>).find(
+      (value): value is string => typeof value === "string" && value.trim().length >= 8,
+    );
+    if (firstString) {
+      return firstString.trim();
+    }
+  }
+  return unwrapJsonBlock(rawContent).replace(/^["']|["']$/g, "").trim();
+}
+
+function isRetryableSuggestionError(error: unknown) {
+  if (!(error instanceof AppError)) {
+    return false;
+  }
+  return error.code === "LONGCAT_INVALID_OUTPUT" || error.code === "LONGCAT_LOW_QUALITY";
+}
+
+function isTimeoutError(error: unknown) {
+  return error instanceof AppError && error.code === "LONGCAT_TIMEOUT";
 }
 
 function isAbortLikeError(error: unknown) {
@@ -515,7 +651,11 @@ function isAbortLikeError(error: unknown) {
   return name === "AbortError" || message.includes("aborted");
 }
 
-export async function generateReplySuggestions(reviewText: string, rating?: number | null): Promise<Suggestion[]> {
+export async function generateReplySuggestions(
+  reviewText: string,
+  rating?: number | null,
+  options: GenerateReplyOptions = {},
+): Promise<Suggestion[]> {
   const normalizedReviewText = normalizeReviewText(reviewText);
   if (!normalizedReviewText) {
     throw new AppError("Review text is invalid or too long.", 400, "INVALID_REVIEW_TEXT");
@@ -526,66 +666,177 @@ export async function generateReplySuggestions(reviewText: string, rating?: numb
     throw new AppError("LONGCAT_API_KEY is missing.", 500, "MISSING_LONGCAT_KEY");
   }
 
-  const model = process.env.LONGCAT_MODEL || DEFAULT_LONGCAT_MODEL;
+  const primaryModel = process.env.LONGCAT_MODEL || DEFAULT_LONGCAT_MODEL;
+  const fallbackModel = process.env.LONGCAT_FALLBACK_MODEL || DEFAULT_LONGCAT_FALLBACK_MODEL;
   const baseUrl = normalizeBaseUrl(process.env.LONGCAT_BASE_URL || DEFAULT_LONGCAT_BASE_URL);
   const endpoint = `${baseUrl}/chat/completions`;
+  const maxAttempts = options.maxAttempts ?? parsePositiveIntEnv("LONGCAT_GENERATE_ATTEMPTS", 1);
+  const retryOptions = {
+    ...getExternalRetryOptions("ai"),
+    ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+  };
 
-  let response: Response;
-  try {
-    response = await fetchWithRetry(
-      endpoint,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
+  async function requestLongCatRaw(prompt: string, maxTokens: number, model = primaryModel) {
+    let response: Response;
+    try {
+      response = await fetchWithRetry(
+        endpoint,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            temperature: 0.2,
+            max_tokens: maxTokens,
+            response_format: { type: "json_object" },
+            messages: [
+              {
+                role: "system",
+                content: "Write customer review replies. Strict JSON only.",
+              },
+              {
+                role: "user",
+                content: prompt,
+              },
+            ],
+          }),
         },
-        body: JSON.stringify({
-          model,
-          temperature: 0.3,
-          max_tokens: 220,
-          response_format: { type: "json_object" },
-          messages: [
-            {
-              role: "user",
-              content: buildSuggestionPrompt(normalizedReviewText, rating),
-            },
-          ],
-        }),
-      },
-      getExternalRetryOptions("ai"),
+        retryOptions,
+      );
+    } catch (error) {
+      if (isAbortLikeError(error)) {
+        throw new AppError("LongCat timeout (> configured limit). Please retry.", 504, "LONGCAT_TIMEOUT");
+      }
+      throw new AppError("LongCat network error.", 502, "LONGCAT_NETWORK_ERROR");
+    }
+
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        throw new AppError("LongCat credentials are invalid or not allowed.", 502, "LONGCAT_AUTH_ERROR");
+      }
+      if (response.status === 429) {
+        throw new AppError("LongCat rate limit reached. Please retry shortly.", 429, "LONGCAT_RATE_LIMIT");
+      }
+      throw new AppError(`LongCat request failed with status ${response.status}.`, 502, "LONGCAT_HTTP_ERROR");
+    }
+
+    let payload: LongCatResponse;
+    try {
+      payload = (await response.json()) as LongCatResponse;
+    } catch {
+      throw new AppError("LongCat returned an unreadable response.", 502, "LONGCAT_INVALID_RESPONSE");
+    }
+    const rawContent = extractLongCatContent(payload.choices?.[0]?.message?.content);
+    if (!rawContent) {
+      throw new AppError("LongCat returned empty content.", 502, "LONGCAT_EMPTY_CONTENT");
+    }
+    return rawContent;
+  }
+
+  const parallelToneGeneration = (process.env.LONGCAT_PARALLEL_TONE_GENERATION || "true").toLowerCase() === "true";
+  if (parallelToneGeneration) {
+    const suggestions = await Promise.all(
+      DEFAULT_TONES.map(async (tone) => {
+        const prompt = buildSingleSuggestionPrompt(normalizedReviewText, tone, rating);
+        try {
+          const rawContent = await requestLongCatRaw(prompt, 120, primaryModel);
+          return {
+            tone,
+            content: parseSingleReplyFromModelContent(rawContent),
+          };
+        } catch (error) {
+          if (!isTimeoutError(error)) {
+            throw error;
+          }
+          const rawContent = await requestLongCatRaw(prompt, 120, fallbackModel);
+          return {
+            tone,
+            content: parseSingleReplyFromModelContent(rawContent),
+          };
+        }
+      }),
     );
-  } catch (error) {
-    if (isAbortLikeError(error)) {
-      throw new AppError("LongCat timeout (> configured limit). Please retry.", 504, "LONGCAT_TIMEOUT");
+    return finalizeSuggestionsForReview(normalizedReviewText, suggestions, rating);
+  }
+
+  let lastSuggestionError: unknown;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetchWithRetry(
+        endpoint,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: primaryModel,
+            temperature: attempt === 0 ? 0.25 : 0.1,
+            max_tokens: 220,
+            response_format: { type: "json_object" },
+            messages: [
+              {
+                role: "system",
+                content: "Write customer review replies. Strict JSON only.",
+              },
+              {
+                role: "user",
+                content: buildSuggestionPrompt(normalizedReviewText, rating, attempt > 0),
+              },
+            ],
+          }),
+        },
+        retryOptions,
+      );
+    } catch (error) {
+      if (isAbortLikeError(error)) {
+        throw new AppError("LongCat timeout (> configured limit). Please retry.", 504, "LONGCAT_TIMEOUT");
+      }
+      throw new AppError("LongCat network error.", 502, "LONGCAT_NETWORK_ERROR");
     }
-    throw new AppError("LongCat network error.", 502, "LONGCAT_NETWORK_ERROR");
-  }
 
-  if (!response.ok) {
-    if (response.status === 401 || response.status === 403) {
-      throw new AppError("LongCat credentials are invalid or not allowed.", 502, "LONGCAT_AUTH_ERROR");
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        throw new AppError("LongCat credentials are invalid or not allowed.", 502, "LONGCAT_AUTH_ERROR");
+      }
+      if (response.status === 429) {
+        throw new AppError("LongCat rate limit reached. Please retry shortly.", 429, "LONGCAT_RATE_LIMIT");
+      }
+      throw new AppError(`LongCat request failed with status ${response.status}.`, 502, "LONGCAT_HTTP_ERROR");
     }
-    if (response.status === 429) {
-      throw new AppError("LongCat rate limit reached. Please retry shortly.", 429, "LONGCAT_RATE_LIMIT");
+
+    let payload: LongCatResponse;
+    try {
+      payload = (await response.json()) as LongCatResponse;
+    } catch {
+      throw new AppError("LongCat returned an unreadable response.", 502, "LONGCAT_INVALID_RESPONSE");
     }
-    throw new AppError(`LongCat request failed with status ${response.status}.`, 502, "LONGCAT_HTTP_ERROR");
+    const rawContent = extractLongCatContent(payload.choices?.[0]?.message?.content);
+    if (!rawContent) {
+      throw new AppError("LongCat returned empty content.", 502, "LONGCAT_EMPTY_CONTENT");
+    }
+
+    const parsedSuggestions = parseSuggestionsFromModelContent(rawContent);
+    try {
+      return finalizeSuggestionsForReview(normalizedReviewText, parsedSuggestions, rating);
+    } catch (error) {
+      lastSuggestionError = error;
+      if (attempt < maxAttempts - 1 && isRetryableSuggestionError(error) && !isTimeoutError(error)) {
+        continue;
+      }
+      throw error;
+    }
   }
 
-  let payload: LongCatResponse;
-  try {
-    payload = (await response.json()) as LongCatResponse;
-  } catch {
-    throw new AppError("LongCat returned an unreadable response.", 502, "LONGCAT_INVALID_RESPONSE");
-  }
-  const rawContent = extractLongCatContent(payload.choices?.[0]?.message?.content);
-  if (!rawContent) {
-    throw new AppError("LongCat returned empty content.", 502, "LONGCAT_EMPTY_CONTENT");
-  }
-
-  const parsedSuggestions = parseSuggestionsFromModelContent(rawContent);
-  const normalizedSuggestions = finalizeSuggestionsForReview(normalizedReviewText, parsedSuggestions, rating);
-
-  return normalizedSuggestions;
+  throw lastSuggestionError instanceof Error
+    ? lastSuggestionError
+    : new AppError("LongCat output did not return exactly 3 valid suggestions.", 502, "LONGCAT_INVALID_OUTPUT");
 }
+
 

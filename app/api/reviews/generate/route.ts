@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
 import { AppError, isAppError } from "@/lib/app-error";
 import { createClient } from "@/utils/supabase/server";
-import { generateReplySuggestions } from "@/lib/gemini";
-import { buildFallbackSuggestions } from "@/lib/sample-suggestions";
 import { normalizeUuid } from "@/lib/validation";
 
 type SuggestionRow = {
@@ -14,20 +12,78 @@ type SuggestionRow = {
   created_at: string;
 };
 
-type AiResult =
-  | { source: "longcat"; suggestions: Awaited<ReturnType<typeof generateReplySuggestions>> }
-  | { source: "error"; error: unknown };
+function normalizeForMatch(text: string) {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/đ/g, "d")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-function parsePositiveIntEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) {
-    return fallback;
+function hasNegativeIssue(reviewText: string) {
+  return /\b(cham|lau|te|kem|ban|lanh|dat|that vong|khong hai long|phien|loi|sai|thieu|on ao|kho chiu|hoi cham|mon len cham|doi lau)\b/i.test(
+    normalizeForMatch(reviewText),
+  );
+}
+
+function isClearlyPositiveReview(reviewText: string, rating?: number | null) {
+  const normalized = normalizeForMatch(reviewText);
+  const positive = /\b(ngon|nhanh|tot|tuyet|hai long|quay lai|than thien|sach|de thuong|ung ho|thich|chuyen nghiep)\b/i.test(
+    normalized,
+  );
+  return !hasNegativeIssue(reviewText) && ((typeof rating === "number" && rating >= 4) || positive);
+}
+
+function containsApology(text: string) {
+  return /\b(xin loi|rat tiec|sorry|apologize|apology)\b/i.test(normalizeForMatch(text));
+}
+
+function isGenericOrMalformedSuggestion(text: string) {
+  const normalized = normalizeForMatch(text);
+  return (
+    text.includes('{"suggestions"') ||
+    text.includes('"content"') ||
+    /\bsample for\b/i.test(text) ||
+    normalized.includes("cam on ban da chia se phan hoi") ||
+    normalized.includes("chung toi da ghi nhan y kien") ||
+    normalized.includes("doi ngu se ra soat va cai thien") ||
+    normalized.includes("xin loi vi trai nghiem chua tron ven") ||
+    normalized.includes("instant local fallback") ||
+    normalized.includes("local fallback")
+  );
+}
+
+function shouldReusePersistedSuggestions(reviewText: string, rating: number | null, suggestions: SuggestionRow[]) {
+  if (suggestions.length < 3) {
+    return false;
   }
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return fallback;
+  if (suggestions.some((suggestion) => isGenericOrMalformedSuggestion(suggestion.content))) {
+    return false;
   }
-  return parsed;
+  if (isClearlyPositiveReview(reviewText, rating) && suggestions.some((suggestion) => containsApology(suggestion.content))) {
+    return false;
+  }
+  return suggestions.slice(0, 3).every((suggestion) => suggestion.content.trim().length >= 20);
+}
+
+async function enqueuePriorityAiJob(supabase: Awaited<ReturnType<typeof createClient>>, reviewId: string) {
+  const { error } = await supabase.from("ai_generation_jobs").upsert(
+    {
+      review_id: reviewId,
+      status: "queued",
+      priority: 100,
+      attempts: 0,
+      error_message: null,
+    },
+    { onConflict: "review_id" },
+  );
+
+  if (error) {
+    throw new AppError(error.message, 500, "AI_JOB_ENQUEUE_ERROR");
+  }
 }
 
 export async function POST(request: Request) {
@@ -50,78 +106,34 @@ export async function POST(request: Request) {
       throw new AppError("Review not found.", 404, "REVIEW_NOT_FOUND");
     }
 
-    let suggestions;
-    let message: string | undefined;
-    const allowFallback = (process.env.ALLOW_AI_FALLBACK || "true").toLowerCase() === "true";
-    const instantMode = (process.env.AI_INSTANT_MODE || "false").toLowerCase() === "true";
-    const aiDeadlineMs = parsePositiveIntEnv("AI_RESPONSE_DEADLINE_MS", 5000);
-
-    if (instantMode) {
-      suggestions = buildFallbackSuggestions(review.review_text);
-      message = "Instant mode enabled: local suggestions returned immediately.";
-    } else {
-      const aiPromise: Promise<AiResult> = generateReplySuggestions(review.review_text, review.rating)
-        .then((generated) => ({ source: "longcat" as const, suggestions: generated }))
-        .catch((error) => ({ source: "error", error }));
-
-      const timeoutResult = { source: "timeout" as const };
-      const raceResult = await Promise.race([
-        aiPromise,
-        new Promise<typeof timeoutResult>((resolve) => setTimeout(() => resolve(timeoutResult), aiDeadlineMs)),
-      ]);
-
-      if (raceResult.source === "longcat") {
-        suggestions = raceResult.suggestions;
-      } else if (raceResult.source === "timeout") {
-        if (allowFallback) {
-          suggestions = buildFallbackSuggestions(review.review_text);
-          message = "LongCat is slow. Instant local fallback suggestions were used.";
-        } else {
-          const awaitedResult = await aiPromise;
-          if (awaitedResult.source === "longcat") {
-            suggestions = awaitedResult.suggestions;
-          } else {
-            throw awaitedResult.error;
-          }
-        }
-      } else {
-        const isLongCatError = isAppError(raceResult.error) && raceResult.error.code.includes("LONGCAT");
-        if (allowFallback && (isLongCatError || raceResult.error instanceof Error)) {
-          suggestions = buildFallbackSuggestions(review.review_text);
-          message = "LongCat unavailable. Instant local fallback suggestions were used.";
-        } else {
-          throw raceResult.error;
-        }
-      }
-    }
-
-    const { error: deleteError } = await supabase.from("ai_suggestions").delete().eq("review_id", reviewId);
-    if (deleteError) {
-      return NextResponse.json({ error: deleteError.message }, { status: 500 });
-    }
-
-    const insertPayload = suggestions.map((suggestion) => ({
-      review_id: reviewId,
-      tone: suggestion.tone,
-      content: suggestion.content,
-      is_selected: false,
-    }));
-
-    const { data: inserted, error: insertError } = await supabase
+    const { data: existingSuggestions, error: existingSuggestionsError } = await supabase
       .from("ai_suggestions")
-      .insert(insertPayload)
       .select("id, review_id, tone, content, is_selected, created_at")
+      .eq("review_id", reviewId)
       .order("created_at", { ascending: true });
 
-    if (insertError) {
-      return NextResponse.json({ error: insertError.message }, { status: 500 });
+    if (existingSuggestionsError) {
+      return NextResponse.json({ error: existingSuggestionsError.message }, { status: 500 });
     }
 
-    return NextResponse.json({
-      reviewId,
-      suggestions: (inserted ?? []) as SuggestionRow[],
-      message,
-    });
+    if (shouldReusePersistedSuggestions(review.review_text, review.rating, (existingSuggestions ?? []) as SuggestionRow[])) {
+      return NextResponse.json({
+        reviewId,
+        suggestions: (existingSuggestions ?? []).slice(0, 3) as SuggestionRow[],
+      });
+    }
+
+    await enqueuePriorityAiJob(supabase, reviewId);
+
+    return NextResponse.json(
+      {
+        reviewId,
+        suggestions: [],
+        pending: true,
+        message: "AI replies are preparing. Please wait a moment.",
+      },
+      { status: 202 },
+    );
   } catch (error) {
     if (isAppError(error)) {
       return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });

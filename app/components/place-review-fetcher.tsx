@@ -31,6 +31,25 @@ export function PlaceReviewFetcher() {
 
   const canSubmit = useMemo(() => placeId.trim().length > 0 && !loading, [placeId, loading]);
 
+  async function warmAiJobs(reviewIds: string[]) {
+    for (let index = 0; index < reviewIds.length; index += 1) {
+      try {
+        const response = await fetch("/api/ai-jobs/process", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ reviewIds, limit: 1 }),
+        });
+        if (response.ok) {
+          router.refresh();
+        }
+      } catch {
+        // Job processing is best-effort; the Generate AI button can re-enqueue later.
+      }
+    }
+  }
+
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
@@ -52,6 +71,7 @@ export function PlaceReviewFetcher() {
 
       setResult(payload);
       window.dispatchEvent(new CustomEvent("reviews:fetched", { detail: payload }));
+      void warmAiJobs(payload.reviews.map((review) => review.id));
       router.refresh();
       window.setTimeout(() => router.refresh(), 2500);
       window.setTimeout(() => router.refresh(), 6000);
@@ -70,7 +90,7 @@ export function PlaceReviewFetcher() {
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-600">Input & Actions</p>
           <h2 className="text-xl font-semibold text-slate-950">Fetch Reviews</h2>
           <p className="max-w-2xl text-sm leading-6 text-slate-600">
-            Enter a Google Place ID. In free/demo mode, LongCat can generate realistic feedback and background AI reply suggestions.
+            Enter a Google Place ID. In free/demo mode, LongCat generates realistic feedback and pre-generates AI replies.
           </p>
         </div>
         <p className="inline-flex w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">

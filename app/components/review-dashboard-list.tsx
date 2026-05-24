@@ -26,6 +26,7 @@ type GenerateResult = {
   reviewId: string;
   suggestions: SuggestionItem[];
   message?: string;
+  pending?: boolean;
   error?: string;
 };
 
@@ -36,12 +37,25 @@ type ApproveResult = {
   error?: string;
 };
 
+type ProcessJobsResult = {
+  completed: number;
+  failed: number;
+  suggestions?: Record<string, SuggestionItem[]>;
+  errors?: Record<string, string>;
+  error?: string;
+};
+
 type FetchReviewsEvent = {
   placeId: string;
   reviews: ReviewItem[];
 };
 
 const PAGE_SIZE = 5;
+const MIN_GENERATE_LOADING_MS = 1000;
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function formatRatingStars(rating: number | null) {
   if (typeof rating !== "number" || !Number.isFinite(rating)) {
@@ -78,6 +92,7 @@ export function ReviewDashboardList({
   const [fetchedReviewIds, setFetchedReviewIds] = useState<string[]>([]);
   const [activeFetchPlaceId, setActiveFetchPlaceId] = useState<string | null>(null);
   const [sideTab, setSideTab] = useState<"old" | "latest">("old");
+  const [visibleSuggestionReviewIds, setVisibleSuggestionReviewIds] = useState<string[]>([]);
 
   const pendingCount = useMemo(
     () => reviews.filter((review) => review.status === "pending").length,
@@ -178,6 +193,7 @@ export function ReviewDashboardList({
       setStatusFilter("all");
       setSortBy("newest");
       setCurrentPage(1);
+      setVisibleSuggestionReviewIds([]);
     }
 
     window.addEventListener("reviews:fetched", onReviewsFetched);
@@ -188,8 +204,16 @@ export function ReviewDashboardList({
     setLoadingByReview((prev) => ({ ...prev, [reviewId]: true }));
     setErrorByReview((prev) => ({ ...prev, [reviewId]: "" }));
     setInfoByReview((prev) => ({ ...prev, [reviewId]: "" }));
+    const startedAt = Date.now();
 
     try {
+      const cachedSuggestions = reviews.find((review) => review.id === reviewId)?.suggestions ?? [];
+      if (cachedSuggestions.length >= 3) {
+        await wait(MIN_GENERATE_LOADING_MS);
+        setVisibleSuggestionReviewIds((prev) => (prev.includes(reviewId) ? prev : [...prev, reviewId]));
+        return;
+      }
+
       const response = await fetch("/api/reviews/generate", {
         method: "POST",
         headers: {
@@ -199,8 +223,57 @@ export function ReviewDashboardList({
       });
 
       const payload = (await response.json()) as GenerateResult;
-      if (!response.ok) {
+      if (response.status === 202 && payload.pending) {
+        setInfoByReview((prev) => ({
+          ...prev,
+          [reviewId]: payload.message || "AI replies are preparing. Please wait a moment.",
+        }));
+        const processResponse = await fetch("/api/ai-jobs/process", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ reviewIds: [reviewId], limit: 1 }),
+        });
+        const processPayload = (await processResponse.json().catch(() => ({}))) as ProcessJobsResult;
+        const processedSuggestions = processPayload.suggestions?.[reviewId] ?? [];
+        if (processedSuggestions.length >= 3) {
+          payload.suggestions = processedSuggestions;
+          payload.message = "";
+        } else if (processPayload.errors?.[reviewId]) {
+          throw new Error(processPayload.errors[reviewId]);
+        } else if (!processResponse.ok) {
+          throw new Error(processPayload.error || "Failed to process AI job.");
+        }
+
+        if (payload.suggestions.length < 3) {
+          const retryResponse = await fetch("/api/reviews/generate", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ reviewId }),
+          });
+          const retryPayload = (await retryResponse.json()) as GenerateResult;
+          if (retryResponse.status === 202 && retryPayload.pending) {
+            setInfoByReview((prev) => ({
+              ...prev,
+              [reviewId]: retryPayload.message || "AI replies are still preparing. Try again shortly.",
+            }));
+            return;
+          }
+          if (!retryResponse.ok) {
+            throw new Error(retryPayload.error || "Failed to generate AI replies.");
+          }
+          payload.suggestions = retryPayload.suggestions;
+          payload.message = retryPayload.message;
+        }
+      } else if (!response.ok) {
         throw new Error(payload.error || "Failed to generate AI replies.");
+      }
+      const elapsedMs = Date.now() - startedAt;
+      if (elapsedMs < MIN_GENERATE_LOADING_MS) {
+        await wait(MIN_GENERATE_LOADING_MS - elapsedMs);
       }
 
       setReviews((prev) =>
@@ -208,6 +281,7 @@ export function ReviewDashboardList({
           review.id === reviewId ? { ...review, suggestions: payload.suggestions ?? [] } : review,
         ),
       );
+      setVisibleSuggestionReviewIds((prev) => (prev.includes(reviewId) ? prev : [...prev, reviewId]));
       if (payload.message) {
         setInfoByReview((prev) => ({ ...prev, [reviewId]: payload.message! }));
       }
@@ -268,6 +342,10 @@ export function ReviewDashboardList({
     }
 
     return [selected, ...review.suggestions.filter((suggestion) => suggestion.id !== selected.id)];
+  }
+
+  function shouldDisplaySuggestions(review: ReviewItem) {
+    return review.status === "resolved" || visibleSuggestionReviewIds.includes(review.id);
   }
 
   return (
@@ -391,16 +469,18 @@ export function ReviewDashboardList({
                   {review.review_time ? new Date(review.review_time).toLocaleString() : "No timestamp"}
                 </p>
 
-                <div className="mt-3">
-                  <button
-                    type="button"
-                    onClick={() => onGenerate(review.id)}
-                    disabled={Boolean(loadingByReview[review.id])}
-                    className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                  >
-                    {loadingByReview[review.id] ? "Generating..." : "Generate AI"}
-                  </button>
-                </div>
+                {review.status !== "resolved" ? (
+                  <div className="mt-3">
+                    <button
+                      type="button"
+                      onClick={() => onGenerate(review.id)}
+                      disabled={Boolean(loadingByReview[review.id])}
+                      className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      {loadingByReview[review.id] ? "Generating..." : "Generate AI"}
+                    </button>
+                  </div>
+                ) : null}
 
                 {errorByReview[review.id] ? (
                   <p className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
@@ -413,7 +493,7 @@ export function ReviewDashboardList({
                   </p>
                 ) : null}
 
-                {review.suggestions.length > 0 ? (
+                {shouldDisplaySuggestions(review) && review.suggestions.length > 0 ? (
                   <div className="mt-4 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-3">
                     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                       <p className="text-xs font-semibold uppercase tracking-[0.12em] text-indigo-700">AI Suggestions</p>
@@ -468,7 +548,7 @@ export function ReviewDashboardList({
                   </div>
                 ) : (
                   <p className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
-                    No AI suggestions yet. Click Generate AI, or wait for background generation after Fetch.
+                    Click Generate AI to view reply suggestions for this review.
                   </p>
                 )}
                 </li>
